@@ -1,0 +1,95 @@
+# ============================================================
+# ClusterAnomalyAnalyzer — Feature Collector
+# Namespace: ae-monitoring
+# ============================================================
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: anomaly-collector-config
+  namespace: ae-monitoring
+data:
+  CLICKHOUSE_HOST: "clickstack-clickhouse.ae-monitoring.svc.cluster.local"
+  CLICKHOUSE_PORT: "9000"
+  CLICKHOUSE_DB:   "default"
+  CLICKHOUSE_USER: "otelcollector"
+  COLLECT_INTERVAL: "60"
+  LOG_LEVEL:        "INFO"
+  BASELINE_LINES:   "50000"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anomaly-collector-secret
+  namespace: ae-monitoring
+type: Opaque
+stringData:
+  CLICKHOUSE_PASSWORD: "lXg}45T{F.4UelH-?4o}"
+
+---
+# ServiceAccount для доступа к Kubernetes API (если понадобится)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: anomaly-collector
+  namespace: ae-monitoring
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anomaly-collector
+  namespace: ae-monitoring
+  labels:
+    app: anomaly-collector
+    component: feature-store
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: anomaly-collector
+  template:
+    metadata:
+      labels:
+        app: anomaly-collector
+        component: feature-store
+    spec:
+      serviceAccountName: anomaly-collector
+      imagePullSecrets:           # ← сюда
+        - name: docker-registry-secret
+      containers:
+        - name: collector
+          # Замени на свой registry если нужно, или используй локальный образ
+          image: registry.autoecommerce.ru/anomaly-collector:0.0.5
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: anomaly-collector-config
+            - secretRef:
+                name: anomaly-collector-secret
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "256Mi"
+            limits:
+              cpu:    "500m"
+              memory: "512Mi"
+          # Liveness: процесс жив если файл обновляется каждые 5 минут
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os, time
+                  f = '/tmp/collector_alive'
+                  if os.path.exists(f):
+                      age = time.time() - os.path.getmtime(f)
+                      exit(0 if age < 300 else 1)
+                  exit(1)
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            failureThreshold: 3
+      restartPolicy: Always
