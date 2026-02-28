@@ -186,6 +186,9 @@ def extract_features(window_events: list[dict], window_start: datetime, entity: 
     portforward_count   = 0  # pods/portforward отдельно
     write_sensitive     = 0  # write verbs на чувствительных ресурсах
     denied_count        = 0  # authz decision = deny
+    cross_ns_count  = 0   # запросы из чужого namespace (T1210 Lateral Movement)
+    watch_count     = 0   # verb=watch на sensitive ресурсах (T1552 persistence)
+    new_pod_count   = 0   # verb=create, resource=pods (T1610 Deploy Container)
 
     unique_users        = set()
     unique_source_ips   = set()
@@ -249,6 +252,20 @@ def extract_features(window_events: list[dict], window_start: datetime, entity: 
         if not is_system and not is_kubectl and not is_kube and user_agent:
             unusual_agents.add(user_agent)
 
+        if username.startswith("system:serviceaccount:"):
+            parts = username.split(":")
+            if len(parts) >= 4 and parts[2] != entity and parts[2] != "":
+                cross_ns_count += 1
+
+        # T1552 persistence: watch на sensitive ресурсах
+        # Атакующий ставит watch чтобы получать изменения без повторных GET
+        if verb == "watch" and resource in SENSITIVE_RESOURCES:
+            watch_count += 1
+
+        # T1610 — Deploy Container: создание новых подов
+        if verb == "create" and resource == "pods":
+            new_pod_count += 1
+
     # Производные признаки
     secrets_list_ratio = (
         secrets_list_count / secrets_count if secrets_count > 0 else 0.0
@@ -296,6 +313,14 @@ def extract_features(window_events: list[dict], window_start: datetime, entity: 
         "_unique_users_list":   list(unique_users)[:10],
         "_verbs_seen":          list(verbs_seen),
         "_resources_seen":      list(resources_seen)[:10],
+
+        "feat_cross_namespace_access": cross_ns_count,
+
+        # T1552 Watch persistence
+        "feat_watch_sensitive":        watch_count,
+
+        # T1610 Deploy Container
+        "feat_new_pod_count":          new_pod_count,
     }
 
 

@@ -138,6 +138,8 @@ def extract_features(events: list[dict], window_start: datetime,
     unique_dst = set()
     unique_dst_ports = set()
     ext_dst_ips = set()
+    lateral        = 0   # pod→pod между разными namespace (T1210)
+    dns_domains    = set()  # уникальные DNS домены (T1048 DNS Tunneling)
 
     for ev in events:
         verdict  = ev.get("verdict", "")
@@ -167,6 +169,29 @@ def extract_features(events: list[dict], window_start: datetime,
         if is_syn:                               syn       += 1
         if dst_port in SUSPICIOUS_PORTS:         suspicious += 1
         if proto == "ICMP":                      icmp      += 1
+        
+        src_ns = ev.get("src_ns", "") or ""
+        dst_ns = ev.get("dst_ns", "") or ""
+
+        # T1210 Lateral Movement: внутренний cross-namespace трафик
+        # src и dst — оба известных namespace, но разные
+        if (src_ns and dst_ns
+                and src_ns != dst_ns
+                and src_ns not in ("unknown", "")
+                and dst_ns not in ("unknown", "")
+                and not ev.get("src_world")
+                and not ev.get("dst_world")):
+            lateral += 1
+
+        # T1048 DNS Tunneling: аномально много уникальных доменов
+        # Нормально: один namespace делает запросы к 5-10 доменам
+        # Tunneling: сотни уникальных субдоменов за минуту
+        dns_query = ev.get("dns_query", "") or ""
+        if dns_query:
+            # Нормализуем до базового домена (убираем субдомены)
+            parts = dns_query.rstrip(".").split(".")
+            base_domain = ".".join(parts[-2:]) if len(parts) >= 2 else dns_query
+            dns_domains.add(base_domain)
 
     port_diversity    = round(len(unique_dst_ports) / n, 4) if n > 0 else 0.0
     wellknown_scanned = len({p for p in unique_dst_ports if 0 < p < 1024})
@@ -205,6 +230,11 @@ def extract_features(events: list[dict], window_start: datetime,
         "_unique_src_ips":            len(unique_src),
         "_unique_dst_ips":            len(unique_dst),
         "_unique_dst_ports":          len(unique_dst_ports),
+
+        "feat_lateral_flow_count":    lateral,
+
+        # T1048 DNS Tunneling
+        "feat_dns_unique_domains":    len(dns_domains),
     }
 
 

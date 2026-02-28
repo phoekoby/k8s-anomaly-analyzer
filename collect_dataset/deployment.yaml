@@ -62,7 +62,7 @@ spec:
       containers:
         - name: collector
           # Замени на свой registry если нужно, или используй локальный образ
-          image: registry.autoecommerce.ru/anomaly-collector:0.0.5
+          image: registry.autoecommerce.ru/anomaly-collector:0.0.7
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
